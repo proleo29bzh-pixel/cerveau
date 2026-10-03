@@ -15,8 +15,8 @@
     document.documentElement.dataset.mode = t.mode === "sombre" || (t.mode !== "clair" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
   </script>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon-192.png?v=202610031604">
-  <link rel="apple-touch-icon" href="icons/icon-180.png?v=202610031604">
+  <link rel="icon" href="icons/icon-192.png?v=202610031610">
+  <link rel="apple-touch-icon" href="icons/icon-180.png?v=202610031610">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style id="acces-style">
@@ -38,7 +38,7 @@
 <body>
   <div id="acces">
     <form class="boite" id="acces-form">
-      <img src="icons/icon-192.png?v=202610031604" alt="">
+      <img src="icons/icon-192.png?v=202610031610" alt="">
       <h1>Cerveau</h1>
       <p>Version test privée. Entre ton mot de passe testeur.</p>
       <input id="acces-mdp" type="password" autocomplete="current-password" placeholder="Mot de passe" required>
@@ -51,7 +51,7 @@
 // Page d'accès : l'appli est publiée chiffrée (AES-GCM). La clé de l'appli est chiffrée une fois par testeur
 // avec une clé dérivée de son mot de passe (PBKDF2). Sans mot de passe valide, rien n'est lisible.
 (async () => {
-  const VERSION = "202610031604", ITER = 250000, MEMO = "cerveau-acces";
+  const VERSION = "202610031610", ITER = 250000, MEMO = "cerveau-acces";
   const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
   const enB64 = (u) => btoa(String.fromCharCode(...new Uint8Array(u)));
   const err = document.getElementById("acces-err"), btn = document.getElementById("acces-btn");
@@ -66,10 +66,10 @@
   }
   async function lancer(acces) {
     const cle = await crypto.subtle.importKey("raw", b64(acces.k), "AES-GCM", false, ["decrypt"]);
-    const zip = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(paquet.iv) }, cle, b64(paquet.data));
-    const flux = new Blob([zip]).stream().pipeThrough(new DecompressionStream("gzip"));
-    const app = JSON.parse(await new Response(flux).text());
+    const clair = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(paquet.iv) }, cle, b64(paquet.data));
+    const app = JSON.parse(new TextDecoder().decode(clair));
     window.CERVEAU_TESTEUR = acces.nom;
+    window.addEventListener("error", (e) => panne(e.message + (e.lineno ? " (ligne " + e.lineno + ")" : "")));
     document.getElementById("acces-style").remove();
     const style = document.createElement("style");
     style.textContent = app.css;
@@ -81,17 +81,34 @@
       document.body.appendChild(s);
     }
   }
+  // Affiche l'erreur au lieu d'un écran vide, avec de quoi repartir (les données de l'appli ne sont pas touchées)
+  window.panne = function (msg) {
+    if (document.getElementById("panne")) return;
+    const d = document.createElement("div");
+    d.id = "panne";
+    d.style.cssText = "position:fixed;left:12px;right:12px;bottom:90px;z-index:99;background:#7A1E1E;color:#fff;padding:14px;border-radius:14px;font:14px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.4)";
+    d.innerHTML = "<b>Oups, un bug</b><br>Fais une capture et envoie-la à Léo :<br><code style='font-size:12px;word-break:break-word'></code><br>" +
+      "<button style='margin-top:10px;padding:10px 14px;border:0;border-radius:99px;font-weight:800'>Réinitialiser l'accès</button>";
+    d.querySelector("code").textContent = String(msg).slice(0, 300);
+    d.querySelector("button").onclick = async () => {
+      localStorage.removeItem(MEMO);
+      try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); for (const k of await caches.keys()) await caches.delete(k); } catch (x) {}
+      location.reload();
+    };
+    document.body.appendChild(d);
+  };
+  async function lancerSur(acces) { try { await lancer(acces); } catch (e) { panne("Démarrage : " + (e.message || e)); } }
   // Accès déjà mémorisé sur ce téléphone (clé dérivée du mot de passe, jamais le mot de passe lui-même)
   try {
     const memo = JSON.parse(localStorage.getItem(MEMO) || "null");
     const e = memo && paquet.testeurs.find((x) => x.id === memo.id);
-    if (e) { await lancer(await ouvrir(e, await cleTesteur(b64(memo.kek)))); return; }
+    if (e) { const acces = await ouvrir(e, await cleTesteur(b64(memo.kek))); await lancerSur(acces); return; }
     if (memo) localStorage.removeItem(MEMO);   // accès retiré
   } catch (e) { localStorage.removeItem(MEMO); }
 
   document.getElementById("acces-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const mdp = document.getElementById("acces-mdp").value.trim();
+    const mdp = document.getElementById("acces-mdp").value.trim().toLowerCase().replace(/[‐-―−]/g, "-").replace(/\s+/g, "");
     if (!mdp) return;
     btn.disabled = true; btn.textContent = "Vérification…"; err.textContent = "";
     const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(mdp), "PBKDF2", false, ["deriveBits"]);
@@ -100,7 +117,7 @@
       try {
         const acces = await ouvrir(e, await cleTesteur(bits));
         try { localStorage.setItem(MEMO, JSON.stringify({ id: e.id, kek: enB64(bits) })); } catch (x) {}
-        return lancer(acces);
+        return lancerSur(acces);
       } catch (x) { /* pas ce testeur */ }
     }
     btn.disabled = false; btn.textContent = "Entrer";
