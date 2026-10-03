@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cerveau</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#14213D">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Cerveau">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <script>
+    try { var t = (JSON.parse(localStorage.getItem("cerveau-v1") || "{}").theme) || {}; } catch (e) { var t = {}; }
+    document.documentElement.dataset.mode = t.mode === "sombre" || (t.mode !== "clair" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  </script>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png?v=202610031423">
+  <link rel="apple-touch-icon" href="icons/icon-180.png?v=202610031423">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style id="acces-style">
+    html, body { margin: 0; height: 100%; }
+    #acces { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: #0B1324; color: #F2EEE8;
+      font: 15px/1.45 Manrope, system-ui, sans-serif;
+      background-image: radial-gradient(90% 60% at 50% 0%, rgba(184,115,51,.25), transparent 70%); }
+    #acces .boite { width: 100%; max-width: 360px; text-align: center; }
+    #acces img { width: 84px; height: 84px; border-radius: 22px; box-shadow: 0 12px 30px rgba(0,0,0,.45); }
+    #acces h1 { font-family: "Space Grotesk", sans-serif; font-size: 30px; margin: 18px 0 4px; }
+    #acces p { color: #9AA3B5; margin: 0 0 22px; }
+    #acces input { width: 100%; box-sizing: border-box; font: inherit; font-size: 18px; padding: 15px 16px; border-radius: 14px; border: 0; background: #F2EEE8; color: #14213D; text-align: center; }
+    #acces button { width: 100%; margin-top: 10px; font: inherit; font-weight: 800; font-size: 16px; padding: 15px; border-radius: 99px; border: 0; background: #B87333; color: #fff; cursor: pointer; }
+    #acces button:disabled { opacity: .5; }
+    #acces .err { color: #FFB38A; min-height: 22px; margin: 10px 0 0; font-weight: 700; }
+    #acces small { display: block; margin-top: 18px; color: #6B7590; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="acces">
+    <form class="boite" id="acces-form">
+      <img src="icons/icon-192.png?v=202610031423" alt="">
+      <h1>Cerveau</h1>
+      <p>Version test privée. Entre ton mot de passe testeur.</p>
+      <input id="acces-mdp" type="password" autocomplete="current-password" placeholder="Mot de passe" required>
+      <button id="acces-btn">Entrer</button>
+      <div class="err" id="acces-err"></div>
+      <small>Tu n'as pas de mot de passe ? Demande-le à Léo.</small>
+    </form>
+  </div>
+<script>
+// Page d'accès : l'appli est publiée chiffrée (AES-GCM). La clé de l'appli est chiffrée une fois par testeur
+// avec une clé dérivée de son mot de passe (PBKDF2). Sans mot de passe valide, rien n'est lisible.
+(async () => {
+  const VERSION = "202610031423", ITER = 250000, MEMO = "cerveau-acces";
+  const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const enB64 = (u) => btoa(String.fromCharCode(...new Uint8Array(u)));
+  const err = document.getElementById("acces-err"), btn = document.getElementById("acces-btn");
+  let paquet;
+  try { paquet = await (await fetch("app.enc?v=" + VERSION, { cache: "no-cache" })).json(); }
+  catch (e) { try { paquet = await (await fetch("app.enc?v=" + VERSION)).json(); } catch (e2) { err.textContent = "Pas de connexion. Réessaie dans un instant."; return; } }
+
+  async function cleTesteur(rawKek) { return crypto.subtle.importKey("raw", rawKek, "AES-GCM", false, ["decrypt"]); }
+  async function ouvrir(entree, kek) {
+    const clair = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(entree.iv) }, kek, b64(entree.cle));
+    return JSON.parse(new TextDecoder().decode(clair));            // { k: clé de l'appli (base64), nom }
+  }
+  async function lancer(acces) {
+    const cle = await crypto.subtle.importKey("raw", b64(acces.k), "AES-GCM", false, ["decrypt"]);
+    const zip = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(paquet.iv) }, cle, b64(paquet.data));
+    const flux = new Blob([zip]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const app = JSON.parse(await new Response(flux).text());
+    window.CERVEAU_TESTEUR = acces.nom;
+    document.getElementById("acces-style").remove();
+    const style = document.createElement("style");
+    style.textContent = app.css;
+    document.head.appendChild(style);
+    document.body.innerHTML = app.body;
+    for (const code of app.scripts) {
+      const s = document.createElement("script");
+      s.textContent = code;
+      document.body.appendChild(s);
+    }
+  }
+  // Accès déjà mémorisé sur ce téléphone (clé dérivée du mot de passe, jamais le mot de passe lui-même)
+  try {
+    const memo = JSON.parse(localStorage.getItem(MEMO) || "null");
+    const e = memo && paquet.testeurs.find((x) => x.id === memo.id);
+    if (e) { await lancer(await ouvrir(e, await cleTesteur(b64(memo.kek)))); return; }
+    if (memo) localStorage.removeItem(MEMO);   // accès retiré
+  } catch (e) { localStorage.removeItem(MEMO); }
+
+  document.getElementById("acces-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const mdp = document.getElementById("acces-mdp").value.trim();
+    if (!mdp) return;
+    btn.disabled = true; btn.textContent = "Vérification…"; err.textContent = "";
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(mdp), "PBKDF2", false, ["deriveBits"]);
+    for (const e of paquet.testeurs) {
+      const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: b64(e.sel), iterations: ITER }, base, 256);
+      try {
+        const acces = await ouvrir(e, await cleTesteur(bits));
+        try { localStorage.setItem(MEMO, JSON.stringify({ id: e.id, kek: enB64(bits) })); } catch (x) {}
+        return lancer(acces);
+      } catch (x) { /* pas ce testeur */ }
+    }
+    btn.disabled = false; btn.textContent = "Entrer";
+    err.textContent = "Mot de passe incorrect.";
+  });
+})();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+</script>
+</body>
+</html>
